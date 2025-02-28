@@ -43,16 +43,17 @@ def _optimized_dequantize_nf4_kernel(
     quant_mask = quant_offset < quant_numel
     
     offset = tl.load(offset_ptr)
-    sup_absmax = tl.load(sup_absmax_ptr + supabsmax_offset)
+    sup_absmax = tl.load(sup_absmax_ptr + supabsmax_offset, eviction_policy='evict_first')
     
-    absmax_idx = tl.load(absmax_ptr + absmax_offset, mask=absmax_mask).to(tl.int32)
-    base_absmax = tl.load(code2_ptr + absmax_idx, mask=absmax_mask)
-    
+    absmax_idx = tl.load(absmax_ptr + absmax_offset, mask=absmax_mask, eviction_policy='evict_first').to(tl.int32)
+    base_absmax = tl.load(code2_ptr + absmax_idx, mask=absmax_mask, eviction_policy='evict_last')
+    ## code2 and code1 are reused across different blocks so evict them last from cache.
+
     absmax = tl.fma(base_absmax, sup_absmax, offset) ## honestly this does not matter. only matters when there's downcasting after every operation
     
-    packed = tl.load(quant_ptr + quant_offset, mask=quant_mask)
+    packed = tl.load(quant_ptr + quant_offset, mask=quant_mask, eviction_policy='evict_first')
     bits = ((packed >> ((1-ileave) << 2)) & 0xF).to(tl.int32) 
-    deq = tl.load(code1_ptr + bits, mask=quant_mask) * absmax
+    deq = tl.load(code1_ptr + bits, mask=quant_mask, eviction_policy='evict_last') * absmax
 
     if dt > 0:
         tl.store(output_ptr + out_offset + ileave, RTNE(tl.cast(deq, tl.uint32, bitcast=True)), mask=quant_mask)
